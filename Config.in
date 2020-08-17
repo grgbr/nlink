@@ -1,0 +1,11 @@
+config NLINK_ASSERT
+	bool "Assertion"
+	default n
+	help
+	  Build nlink library with internal assertions.
+
+config NLINK_IFACE
+	bool "Interface"
+	default y
+	help
+	  Build nlink library with Rtnetlink link/interface support.
