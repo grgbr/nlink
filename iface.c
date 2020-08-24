@@ -1,5 +1,5 @@
 #include <nlink/iface.h>
-#include "utils.h"
+#include <utils/net.h>
 #include <string.h>
 #include <errno.h>
 #include <net/if.h>
@@ -154,8 +154,8 @@ nlink_iface_setup_msg_addr(struct nlmsghdr *msg, const struct ether_addr *addr)
 	nlink_assert(msg);
 	nlink_assert(msg->nlmsg_len >=
 	             mnl_nlmsg_size(sizeof(struct ifinfomsg)));
-	nlink_assert(nwu_hwaddr_is_laa(addr));
-	nlink_assert(nwu_hwaddr_is_ucast(addr));
+	nlink_assert(unet_hwaddr_is_laa(addr));
+	nlink_assert(unet_hwaddr_is_ucast(addr));
 
 	if (!mnl_attr_put_check(msg,
 	                        NLINK_XFER_MSG_SIZE,
