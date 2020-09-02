@@ -4,7 +4,6 @@
 #include <nlink/config.h>
 #include <stdlib.h>
 #include <libmnl/libmnl.h>
-#include <utils/assert.h>
 
 /* Old versions of libmnl don't define maximum receiver side message size. */
 #ifndef MNL_SOCKET_DUMP_SIZE
@@ -19,6 +18,8 @@
  ******************************************************************************/
 
 #if defined(CONFIG_NLINK_ASSERT)
+
+#include <utils/assert.h>
 
 #define nlink_assert(_expr) \
 	uassert("nlink", _expr)
