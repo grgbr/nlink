@@ -4,6 +4,12 @@ config NLINK_ASSERT
 	help
 	  Build nlink library with internal assertions.
 
+config NLINK_WORK
+	bool "Async work"
+	default y
+	help
+	  Build nlink library with asynchronous work unit and window support.
+
 config NLINK_IFACE
 	bool "Interface"
 	default y
