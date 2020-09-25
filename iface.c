@@ -1,4 +1,5 @@
 #include <nlink/iface.h>
+#include "parse.h"
 #include <utils/net.h>
 #include <string.h>
 #include <errno.h>
@@ -8,123 +9,243 @@
 #include <linux/if_arp.h>
 #include <linux/rtnetlink.h>
 
-////////////////////////////////////////////////////////////////////////////////
+#define nlink_iface_assert_oper_state(_state) \
+	nlink_assert(_state != IF_OPER_NOTPRESENT); \
+	nlink_assert(_state != IF_OPER_TESTING)
 
-#if 0
-int
-nlink_parse_hwaddr_attr(const struct nlattr *attr, struct ether_addr *addr)
+static int
+nlink_iface_parse_ucast_hwaddr(const struct nlattr *attr,
+                               struct nlink_iface  *iface)
 {
-	rtnl_assert(attr);
-	rtnl_assert(addr);
+	nlink_assert(attr);
+	nlink_assert(iface);
+
+	iface->ucast_hwaddr = nlink_parse_hwaddr_attr(attr);
+
+	return (iface->ucast_hwaddr) ? 0 : -errno;
+}
+
+static int
+nlink_iface_parse_bcast_hwaddr(const struct nlattr *attr,
+                               struct nlink_iface  *iface)
+{
+	nlink_assert(attr);
+	nlink_assert(iface);
+
+	iface->bcast_hwaddr = nlink_parse_hwaddr_attr(attr);
+
+	return (iface->bcast_hwaddr) ? 0 : -errno;
+}
+
+static int
+nlink_iface_parse_name(const struct nlattr *attr, struct nlink_iface *iface)
+{
+	nlink_assert(attr);
+	nlink_assert(iface);
+
+	ssize_t size;
+
+	size = nlink_parse_string_attr(attr, &iface->name, IFNAMSIZ);
+	if (size <= 0)
+		return size ? size : -EBADMSG;
+
+	iface->name_len = size - 1;
+
+	return 0;
+}
+
+static int
+nlink_iface_parse_mtu(const struct nlattr *attr, struct nlink_iface *iface)
+{
+	nlink_assert(attr);
+	nlink_assert(iface);
 
 	int err;
 
-	err = nlink_parse_binary_attr(attr);
+	err = nlink_parse_uint32_attr(attr, &iface->mtu);
 	if (err)
 		return err;
 
-	if (mnl_attr_get_payload_len(attr) != sizeof(*addr))
-		return -ERANGE;
-
-	*addr = *(typeof(addr))mnl_attr_get_payload(attr);
+	nlink_assert(unet_mtu_isok(iface->mtu));
 
 	return 0;
 }
 
-int
-nlink_parse_map_attr(const struct nlattr *attr, struct rtnl_link_ifmap *map)
+static int
+nlink_iface_parse_link(const struct nlattr *attr, struct nlink_iface *iface)
 {
-	rtnl_assert(attr);
-	rtnl_assert(map);
+	nlink_assert(attr);
+	nlink_assert(iface);
 
-	uint16_t len;
+	int err;
 
-	len = mnl_attr_get_payload_len(attr);
-	if (len < sizeof(*map))
-		return -ERANGE;
-
-	if (len != sizeof(*map))
-		rtnl_warn("unexpected IFLA map size (%hd != %zu)",
-		          len,
-		          sizeof(*map));
-
-	*map = *(typeof(map))mnl_attr_get_payload(attr);
-
-	return 0;
-}
-
-int
-nlink_parse_stats_attr(const struct nlattr *attr, struct rtnl_link_stats *stats)
-{
-	rtnl_assert(attr);
-	rtnl_assert(stats);
-
-	uint16_t len;
-
-	len = mnl_attr_get_payload_len(attr);
-	if (len < sizeof(*stats))
-		return -ERANGE;
-
-	if (len != sizeof(*stats))
-		rtnl_warn("unexpected IFLA stats size (%hd != %zu)",
-		          len,
-		          sizeof(*stats));
-
-	*stats = *(typeof(stats))mnl_attr_get_payload(attr);
-
-	return 0;
-}
-
-int
-nlink_parse_stats64_attr(const struct nlattr      *attr,
-                         struct rtnl_link_stats64 *stats)
-{
-	rtnl_assert(attr);
-	rtnl_assert(stats);
-
-	uint16_t len;
-
-	len = mnl_attr_get_payload_len(attr);
-	if (len < sizeof(*stats))
-		return -ERANGE;
-
-	if (len != sizeof(*stats))
-		rtnl_warn("unexpected IFLA stats64 size (%hd != %zu)",
-		          len,
-		          sizeof(*stats));
-
-	*stats = *(typeof(stats))mnl_attr_get_payload(attr);
-
-	return 0;
-}
-
-ssize_t
-nlink_parse_phys_port_id_attr(const struct nlattr *attr,
-                             unsigned char        id[RTNL_PHYS_PORT_ID_LEN])
-{
-	rtnl_assert(attr);
-	rtnl_assert(id);
-
-	int    err;
-	size_t len;
-
-	err = ifla_parse_binary_attr(attr);
+	err = nlink_parse_uint32_attr(attr, &iface->link);
 	if (err)
 		return err;
 
-	len = mnl_attr_get_payload_len(attr);
-	if (len > RTNL_PHYS_PORT_ID_LEN)
-		return -ERANGE;
+	nlink_assert(iface->link > 0);
 
-	memset(id, 0, RTNL_PHYS_PORT_ID_LEN);
-	memcpy(id, mnl_attr_get_payload(attr), len);
-
-	return len;
+	return 0;
 }
 
-#endif
+static int
+nlink_iface_parse_master(const struct nlattr *attr, struct nlink_iface *iface)
+{
+	nlink_assert(attr);
+	nlink_assert(iface);
 
-////////////////////////////////////////////////////////////////////////////////
+	int err;
+
+	err = nlink_parse_uint32_attr(attr, &iface->master);
+	if (err)
+		return err;
+
+	nlink_assert(iface->master > 0);
+
+	return 0;
+}
+
+static int
+nlink_iface_parse_oper_state(const struct nlattr *attr,
+                             struct nlink_iface  *iface)
+{
+	nlink_assert(attr);
+	nlink_assert(iface);
+
+	int err;
+
+	err = nlink_parse_uint8_attr(attr, &iface->oper_state);
+	if (err)
+		return err;
+
+	nlink_iface_assert_oper_state(iface->oper_state);
+
+	return 0;
+}
+
+static int
+nlink_iface_parse_group(const struct nlattr *attr, struct nlink_iface *iface)
+{
+	nlink_assert(attr);
+	nlink_assert(iface);
+
+	return nlink_parse_uint32_attr(attr, &iface->group);
+}
+
+static int
+nlink_iface_parse_promisc(const struct nlattr *attr, struct nlink_iface *iface)
+{
+	nlink_assert(attr);
+	nlink_assert(iface);
+
+	return nlink_parse_uint32_attr(attr, &iface->promisc);
+}
+
+static int
+nlink_iface_parse_carrier(const struct nlattr *attr, struct nlink_iface *iface)
+{
+	nlink_assert(attr);
+	nlink_assert(iface);
+
+	int err;
+
+	err = nlink_parse_uint8_attr(attr, &iface->carrier);
+	if (err)
+		return err;
+
+	nlink_iface_assert_oper_state(iface->carrier);
+
+	return 0;
+}
+
+typedef int (nlink_iface_parse_attr_fn)(const struct nlattr *attr,
+                                        struct nlink_iface  *iface);
+
+static nlink_iface_parse_attr_fn * const nlink_iface_attr_parsers[] = {
+	[IFLA_ADDRESS]     = nlink_iface_parse_ucast_hwaddr,
+	[IFLA_BROADCAST]   = nlink_iface_parse_bcast_hwaddr,
+	[IFLA_IFNAME]      = nlink_iface_parse_name,
+	[IFLA_MTU]         = nlink_iface_parse_mtu,
+	[IFLA_LINK]        = nlink_iface_parse_link,
+	[IFLA_MASTER]      = nlink_iface_parse_master,
+	[IFLA_OPERSTATE]   = nlink_iface_parse_oper_state,
+	[IFLA_GROUP]       = nlink_iface_parse_group,
+	[IFLA_PROMISCUITY] = nlink_iface_parse_promisc,
+	[IFLA_CARRIER]     = nlink_iface_parse_carrier
+};
+
+static const struct nlink_iface nlink_iface_null = {
+	.type         = ARPHRD_VOID,
+	.index        = 0,
+	.ucast_hwaddr = NULL,
+	.bcast_hwaddr = NULL,
+	.name         = NULL,
+	.name_len     = 0,
+	.mtu          = 0,
+	.link         = 0,
+	.master       = 0,
+	.oper_state   = IF_OPER_UNKNOWN,
+	.group        = 0,
+	.promisc      = 0,
+	.carrier      = IF_OPER_UNKNOWN
+};
+
+int
+nlink_iface_parse_msg(const struct nlmsghdr *msg, struct nlink_iface *iface)
+{
+	nlink_assert(msg);
+	nlink_assert(!(msg->nlmsg_flags & NLM_F_DUMP_INTR));
+	nlink_assert(msg->nlmsg_type == RTM_NEWLINK);
+
+	const struct ifinfomsg *info;
+	const struct nlattr    *attr;
+	int                     ret = -ENODEV;
+
+	*iface = nlink_iface_null;
+
+	info = (struct ifinfomsg *)mnl_nlmsg_get_payload(msg);
+	nlink_assert(info->ifi_type < ARPHRD_NONE);
+	nlink_assert(info->ifi_index > 0);
+	
+	iface->type = info->ifi_type;
+	iface->index = info->ifi_index;
+
+	mnl_attr_for_each(attr, msg, sizeof(*info)) {
+		uint16_t type;
+
+		type = mnl_attr_get_type(attr);
+		if (type < array_nr(nlink_iface_attr_parsers)) {
+			ret = nlink_iface_attr_parsers[type](attr, iface);
+			if (ret)
+				return ret;
+		}
+	}
+
+	if (!iface->name)
+		return -ENODEV;
+
+	return 0;
+}
+
+int
+nlink_iface_setup_msg_ucast_hwaddr(struct nlmsghdr         *msg,
+                                   const struct ether_addr *hwaddr)
+{
+	nlink_assert(msg);
+	nlink_assert(msg->nlmsg_len >=
+	             mnl_nlmsg_size(sizeof(struct ifinfomsg)));
+	nlink_assert(unet_hwaddr_is_laa(hwaddr));
+	nlink_assert(unet_hwaddr_is_ucast(hwaddr));
+
+	if (!mnl_attr_put_check(msg,
+	                        NLINK_XFER_MSG_SIZE,
+	                        IFLA_ADDRESS,
+	                        sizeof(*hwaddr),
+	                        hwaddr))
+		return -EMSGSIZE;
+
+	return 0;
+}
 
 int
 nlink_iface_setup_msg_name(struct nlmsghdr *msg, const char *name, size_t len)
@@ -143,43 +264,6 @@ nlink_iface_setup_msg_name(struct nlmsghdr *msg, const char *name, size_t len)
 	                        IFLA_IFNAME,
 	                        len,
 	                        name))
-		return -EMSGSIZE;
-
-	return 0;
-}
-
-int
-nlink_iface_setup_msg_addr(struct nlmsghdr *msg, const struct ether_addr *addr)
-{
-	nlink_assert(msg);
-	nlink_assert(msg->nlmsg_len >=
-	             mnl_nlmsg_size(sizeof(struct ifinfomsg)));
-	nlink_assert(unet_hwaddr_is_laa(addr));
-	nlink_assert(unet_hwaddr_is_ucast(addr));
-
-	if (!mnl_attr_put_check(msg,
-	                        NLINK_XFER_MSG_SIZE,
-	                        IFLA_ADDRESS,
-	                        sizeof(*addr),
-	                        addr))
-		return -EMSGSIZE;
-
-	return 0;
-}
-
-int
-nlink_iface_setup_msg_mtu(struct nlmsghdr *msg, uint32_t mtu)
-{
-	nlink_assert(msg);
-	nlink_assert(msg->nlmsg_len >=
-	             mnl_nlmsg_size(sizeof(struct ifinfomsg)));
-	nlink_assert(mtu);
-	nlink_assert(mtu <= IP_MAXPACKET);
-
-	if (!mnl_attr_put_u32_check(msg,
-	                            NLINK_XFER_MSG_SIZE,
-	                            IFLA_MTU,
-	                            mtu))
 		return -EMSGSIZE;
 
 	return 0;
@@ -210,17 +294,34 @@ nlink_iface_setup_msg_oper_state(struct nlmsghdr *msg, uint8_t oper_state)
 	return 0;
 }
 
+int
+nlink_iface_setup_msg_mtu(struct nlmsghdr *msg, uint32_t mtu)
+{
+	nlink_assert(msg);
+	nlink_assert(msg->nlmsg_len >=
+	             mnl_nlmsg_size(sizeof(struct ifinfomsg)));
+	nlink_assert(unet_mtu_isok(mtu));
+
+	if (!mnl_attr_put_u32_check(msg,
+	                            NLINK_XFER_MSG_SIZE,
+	                            IFLA_MTU,
+	                            mtu))
+		return -EMSGSIZE;
+
+	return 0;
+}
+
 void
-nlink_iface_setup_msg(struct nlmsghdr   *msg,
+nlink_iface_setup_new(struct nlmsghdr   *msg,
                       struct nlink_sock *sock,
-                      unsigned short     iftype,
-                      int                ifid)
+                      unsigned short     type,
+                      int                index)
 {
 	nlink_assert(msg);
 	nlink_assert(sock);
-	nlink_assert(ifid > 0);
-	nlink_assert(iftype != ARPHRD_VOID);
-	nlink_assert(iftype != ARPHRD_NONE);
+	nlink_assert(index > 0);
+	nlink_assert(type != ARPHRD_VOID);
+	nlink_assert(type != ARPHRD_NONE);
 
 	struct ifinfomsg *info;
 
@@ -232,8 +333,24 @@ nlink_iface_setup_msg(struct nlmsghdr   *msg,
 
 	info = mnl_nlmsg_put_extra_header(msg, sizeof(*info));
 	info->ifi_family = AF_UNSPEC;
-	info->ifi_type = iftype;
-	info->ifi_index = ifid;
+	info->ifi_type = type;
+	info->ifi_index = index;
 	info->ifi_flags = 0;
 	info->ifi_change = 0;
+}
+
+void
+nlink_iface_setup_dump(struct nlmsghdr   *msg,
+                       struct nlink_sock *sock)
+{
+	struct ifinfomsg *info;
+
+	mnl_nlmsg_put_header(msg);
+	msg->nlmsg_type = RTM_GETLINK;
+	msg->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+	msg->nlmsg_seq = nlink_alloc_seqno(sock);
+	msg->nlmsg_pid = sock->port_id;
+
+	info = mnl_nlmsg_put_extra_header(msg, sizeof(*info));
+	info->ifi_family = AF_UNSPEC;
 }

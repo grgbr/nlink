@@ -1,5 +1,6 @@
 #include "parse.h"
 #include <string.h>
+#include <net/ethernet.h>
 
 int
 nlink_parse_uint8_attr(const struct nlattr *attr, uint8_t *value)
@@ -57,27 +58,46 @@ nlink_parse_uint64_attr(const struct nlattr *attr, uint64_t *value)
 	return 0;
 }
 
-int
-nlink_parse_string_attr(const struct nlattr *attr, char *value, size_t size)
+ssize_t
+nlink_parse_string_attr(const struct nlattr  *attr,
+                        const char          **str,
+                        size_t                size)
 {
 	nlink_assert(attr);
-	nlink_assert(value);
+	nlink_assert(str);
 	nlink_assert(size > 1);
 
-	size_t len;
+	size_t sz;
 
 	if (mnl_attr_validate(attr, MNL_TYPE_NUL_STRING))
 		return -errno;
 
-	len = mnl_attr_get_payload_len(attr);
-	if (len > size)
+	sz = mnl_attr_get_payload_len(attr);
+	if (!sz || (sz > size))
 		return -ERANGE;
 
-	/*
-	 * No need to check for size constraint since already done by
-	 * MNL_TYPE_NUL_STRING attribute validation above.
-	 */
-	strcpy(value, mnl_attr_get_str(attr));
+	*str = mnl_attr_get_str(attr);
 
-	return 0;
+	return sz;
+}
+
+const struct ether_addr *
+nlink_parse_hwaddr_attr(const struct nlattr *attr)
+{
+	nlink_assert(attr);
+
+	int err;
+
+	err = nlink_parse_binary_attr(attr);
+	if (err) {
+		errno = -err;
+		return NULL;
+	}
+
+	if (mnl_attr_get_payload_len(attr) != sizeof(struct ether_addr)) {
+		errno = ERANGE;
+		return NULL;
+	}
+
+	return (struct ether_addr *)mnl_attr_get_payload(attr);
 }

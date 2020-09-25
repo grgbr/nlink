@@ -79,6 +79,52 @@ nlink_parse_msg_head(const struct nlmsghdr *msg)
 	return -EIO;
 }
 
+int
+nlink_parse_msg(const struct nlmsghdr *msg,
+                size_t                 size,
+                nlink_parse_msg_fn    *parse,
+                void                  *data)
+{
+	nlink_assert(mnl_nlmsg_ok(msg, (int)size));
+	nlink_assert(parse);
+	nlink_assert(size);
+
+	int bytes = size;
+
+	do {
+		int ret;
+
+		ret = nlink_parse_msg_head(msg);
+		switch (ret) {
+		case 0:
+			ret = parse(msg, data);
+			if (ret)
+				return ret;
+			break;
+
+		case -ENODATA:
+			/*
+			 * End of message sequence / datagram. Just return since
+			 * we are always provided with enough space to hold
+			 * the largest supported netlink message size.
+			 */
+			return 0;
+
+		case -ENOENT:
+			/* Empty message, skip to next one. */
+			break;
+
+		default:
+			return ret;
+		}
+
+		msg = mnl_nlmsg_next(msg, &bytes);
+	} while (mnl_nlmsg_ok(msg, bytes));
+
+	/* Happens when parsing a single part message. */
+	return 0;
+}
+
 void
 nlink_sprint_msg(char                   string[NLINK_SPRINT_MSG_SIZE],
                  const struct nlmsghdr *msg)

@@ -44,6 +44,14 @@ nlink_parse_error_msg(const struct nlmsghdr *msg);
 extern int
 nlink_parse_msg_head(const struct nlmsghdr *msg);
 
+typedef int (nlink_parse_msg_fn)(const struct nlmsghdr *msg, void *data);
+
+extern int
+nlink_parse_msg(const struct nlmsghdr *msg,
+                size_t                 size,
+                nlink_parse_msg_fn    *parse,
+                void                  *data);
+
 /******************************************************************************
  * Netlink message buffer (de)allocation
  ******************************************************************************/
@@ -93,6 +101,12 @@ nlink_recv_msg(const struct nlink_sock *sock, struct nlmsghdr *msg);
 
 extern int
 nlink_open_sock(struct nlink_sock *sock, int bus, int flags);
+
+static inline int
+nlink_open_route_sock(struct nlink_sock *sock, int flags)
+{
+	return nlink_open_sock(sock, NETLINK_ROUTE, flags);
+}
 
 extern void
 nlink_close_sock(const struct nlink_sock *sock);
