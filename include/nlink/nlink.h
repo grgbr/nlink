@@ -4,6 +4,7 @@
 #include <nlink/config.h>
 #include <stdlib.h>
 #include <libmnl/libmnl.h>
+#include <linux/rtnetlink.h>
 
 /* Old versions of libmnl don't define maximum receiver side message size. */
 #ifndef MNL_SOCKET_DUMP_SIZE
@@ -103,6 +104,12 @@ nlink_recv_msg(const struct nlink_sock *sock, struct nlmsghdr *msg);
 
 extern int
 nlink_open_sock(struct nlink_sock *sock, int bus, int flags);
+
+extern int
+nlink_join_route_group(struct nlink_sock *sock, enum rtnetlink_groups group);
+
+extern int
+nlink_leave_route_group(struct nlink_sock *sock, enum rtnetlink_groups group);
 
 static inline int
 nlink_open_route_sock(struct nlink_sock *sock, int flags)

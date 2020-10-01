@@ -263,6 +263,50 @@ nlink_sock_fd(const struct nlink_sock *sock)
 }
 
 int
+nlink_join_route_group(struct nlink_sock *sock, enum rtnetlink_groups group)
+{
+	nlink_assert(sock);
+	nlink_assert(group > RTNLGRP_NONE);
+	nlink_assert(group <= RTNLGRP_MAX);
+
+	if (mnl_socket_setsockopt(sock->mnl,
+	                          NETLINK_ADD_MEMBERSHIP,
+	                          &group,
+	                          sizeof(group))) {
+		nlink_assert(errno != EBADF);
+		nlink_assert(errno != EFAULT);
+		nlink_assert(errno != EINVAL);
+		nlink_assert(errno != ENOPROTOOPT);
+		nlink_assert(errno != ENOTSOCK);
+		return -errno;
+	}
+
+	return 0;
+}
+
+int
+nlink_leave_route_group(struct nlink_sock *sock, enum rtnetlink_groups group)
+{
+	nlink_assert(sock);
+	nlink_assert(group > RTNLGRP_NONE);
+	nlink_assert(group <= RTNLGRP_MAX);
+
+	if (mnl_socket_setsockopt(sock->mnl,
+	                          NETLINK_DROP_MEMBERSHIP,
+	                          &group,
+	                          sizeof(group))) {
+		nlink_assert(errno != EBADF);
+		nlink_assert(errno != EFAULT);
+		nlink_assert(errno != EINVAL);
+		nlink_assert(errno != ENOPROTOOPT);
+		nlink_assert(errno != ENOTSOCK);
+		return -errno;
+	}
+
+	return 0;
+}
+
+int
 nlink_open_sock(struct nlink_sock *sock, int bus, int flags)
 {
 	nlink_assert(sock);
