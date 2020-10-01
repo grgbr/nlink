@@ -9,10 +9,6 @@
 #include <linux/if_arp.h>
 #include <linux/rtnetlink.h>
 
-#define nlink_iface_assert_oper_state(_state) \
-	nlink_assert(_state != IF_OPER_NOTPRESENT); \
-	nlink_assert(_state != IF_OPER_TESTING)
-
 static int
 nlink_iface_parse_ucast_hwaddr(const struct nlattr *attr,
                                struct nlink_iface  *iface)
@@ -66,7 +62,7 @@ nlink_iface_parse_mtu(const struct nlattr *attr, struct nlink_iface *iface)
 	if (err)
 		return err;
 
-	nlink_assert(unet_mtu_isok(iface->mtu));
+	nlink_assert(unet_iface_mtu_isok(iface->mtu));
 
 	return 0;
 }
@@ -118,7 +114,7 @@ nlink_iface_parse_oper_state(const struct nlattr *attr,
 	if (err)
 		return err;
 
-	nlink_iface_assert_oper_state(iface->oper_state);
+	nlink_assert(unet_iface_oper_state_isok(iface->oper_state));
 
 	return 0;
 }
@@ -142,18 +138,20 @@ nlink_iface_parse_promisc(const struct nlattr *attr, struct nlink_iface *iface)
 }
 
 static int
-nlink_iface_parse_carrier(const struct nlattr *attr, struct nlink_iface *iface)
+nlink_iface_parse_carrier_state(const struct nlattr *attr,
+                                struct nlink_iface  *iface)
 {
 	nlink_assert(attr);
 	nlink_assert(iface);
 
 	int err;
 
-	err = nlink_parse_uint8_attr(attr, &iface->carrier);
+	err = nlink_parse_uint8_attr(attr, &iface->carrier_state);
 	if (err)
 		return err;
 
-	nlink_iface_assert_oper_state(iface->carrier);
+	/* Loopback interfaces set carrier as IF_OPER_NOTPRESENT. */
+	nlink_assert(unet_iface_carrier_state_isok(iface->carrier_state));
 
 	return 0;
 }
@@ -171,23 +169,24 @@ static nlink_iface_parse_attr_fn * const nlink_iface_attr_parsers[] = {
 	[IFLA_OPERSTATE]   = nlink_iface_parse_oper_state,
 	[IFLA_GROUP]       = nlink_iface_parse_group,
 	[IFLA_PROMISCUITY] = nlink_iface_parse_promisc,
-	[IFLA_CARRIER]     = nlink_iface_parse_carrier
+	[IFLA_CARRIER]     = nlink_iface_parse_carrier_state
 };
 
 static const struct nlink_iface nlink_iface_null = {
-	.type         = ARPHRD_VOID,
-	.index        = 0,
-	.ucast_hwaddr = NULL,
-	.bcast_hwaddr = NULL,
-	.name         = NULL,
-	.name_len     = 0,
-	.mtu          = 0,
-	.link         = 0,
-	.master       = 0,
-	.oper_state   = IF_OPER_UNKNOWN,
-	.group        = 0,
-	.promisc      = 0,
-	.carrier      = IF_OPER_UNKNOWN
+	.type          = ARPHRD_VOID,
+	.index         = 0,
+	.admin_state   = IF_OPER_UNKNOWN,
+	.ucast_hwaddr  = NULL,
+	.bcast_hwaddr  = NULL,
+	.name          = NULL,
+	.name_len      = 0,
+	.mtu           = 0,
+	.link          = 0,
+	.master        = 0,
+	.oper_state    = IF_OPER_UNKNOWN,
+	.group         = 0,
+	.promisc       = 0,
+	.carrier_state = IF_OPER_UNKNOWN
 };
 
 int
@@ -196,6 +195,7 @@ nlink_iface_parse_msg(const struct nlmsghdr *msg, struct nlink_iface *iface)
 	nlink_assert(msg);
 	nlink_assert(!(msg->nlmsg_flags & NLM_F_DUMP_INTR));
 	nlink_assert(msg->nlmsg_type == RTM_NEWLINK);
+	nlink_assert(iface);
 
 	const struct ifinfomsg *info;
 	const struct nlattr    *attr;
@@ -209,15 +209,23 @@ nlink_iface_parse_msg(const struct nlmsghdr *msg, struct nlink_iface *iface)
 	
 	iface->type = info->ifi_type;
 	iface->index = info->ifi_index;
+	iface->admin_state = (info->ifi_flags & IFF_UP) ? IF_OPER_UP :
+	                                                  IF_OPER_DOWN;
+	unet_iface_admin_state_isok(iface->admin_state);
 
 	mnl_attr_for_each(attr, msg, sizeof(*info)) {
 		uint16_t type;
 
 		type = mnl_attr_get_type(attr);
 		if (type < array_nr(nlink_iface_attr_parsers)) {
-			ret = nlink_iface_attr_parsers[type](attr, iface);
-			if (ret)
-				return ret;
+			nlink_iface_parse_attr_fn *parser;
+
+			parser = nlink_iface_attr_parsers[type];
+			if (parser) {
+				ret = parser(attr, iface);
+				if (ret)
+					return ret;
+			}
 		}
 	}
 
@@ -270,26 +278,31 @@ nlink_iface_setup_msg_name(struct nlmsghdr *msg, const char *name, size_t len)
 }
 
 int
-nlink_iface_setup_msg_oper_state(struct nlmsghdr *msg, uint8_t oper_state)
+nlink_iface_setup_msg_admin_state(struct nlmsghdr *msg, uint8_t state)
 {
 	nlink_assert(msg);
 	nlink_assert(msg->nlmsg_len >=
 	             mnl_nlmsg_size(sizeof(struct ifinfomsg)));
 
-	switch (oper_state) {
+	struct ifinfomsg *info;
+
+	info = mnl_nlmsg_get_payload(msg);
+
+	switch (state) {
 	case IF_OPER_UP:
+		info->ifi_flags |= IFF_UP;
+		break;
+
 	case IF_OPER_DOWN:
+		info->ifi_flags &= ~IFF_UP;
 		break;
 
 	default:
 		nlink_assert(0);
 	}
 
-	if (!mnl_attr_put_u8_check(msg,
-	                           NLINK_XFER_MSG_SIZE,
-	                           IFLA_OPERSTATE,
-	                           oper_state))
-		return -EMSGSIZE;
+	/* Request administrative state change. */
+	info->ifi_change |= IFF_UP;
 
 	return 0;
 }
@@ -300,7 +313,7 @@ nlink_iface_setup_msg_mtu(struct nlmsghdr *msg, uint32_t mtu)
 	nlink_assert(msg);
 	nlink_assert(msg->nlmsg_len >=
 	             mnl_nlmsg_size(sizeof(struct ifinfomsg)));
-	nlink_assert(unet_mtu_isok(mtu));
+	nlink_assert(unet_iface_mtu_isok(mtu));
 
 	if (!mnl_attr_put_u32_check(msg,
 	                            NLINK_XFER_MSG_SIZE,
@@ -333,7 +346,7 @@ nlink_iface_setup_new(struct nlmsghdr   *msg,
 
 	info = mnl_nlmsg_put_extra_header(msg, sizeof(*info));
 	info->ifi_family = AF_UNSPEC;
-	info->ifi_type = type;
+	info->ifi_type = 0;
 	info->ifi_index = index;
 	info->ifi_flags = 0;
 	info->ifi_change = 0;
@@ -353,4 +366,8 @@ nlink_iface_setup_dump(struct nlmsghdr   *msg,
 
 	info = mnl_nlmsg_put_extra_header(msg, sizeof(*info));
 	info->ifi_family = AF_UNSPEC;
+	info->ifi_type = 0;
+	info->ifi_index = 0;
+	info->ifi_flags = 0;
+	info->ifi_change = 0;
 }
