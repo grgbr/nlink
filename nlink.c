@@ -90,39 +90,57 @@ nlink_parse_msg(const struct nlmsghdr *msg,
 	nlink_assert(size);
 
 	int bytes = size;
+	int ret;
 
 	do {
-		int ret;
-
 		ret = nlink_parse_msg_head(msg);
 		switch (ret) {
 		case 0:
-			ret = parse(msg, data);
+			/*
+			 * Message header is consistent and message carries
+			 * data: run the callback given in argument.
+			 */
+			ret = parse(ret, msg, data);
 			if (ret)
 				return ret;
 			break;
 
-		case -ENODATA:
-			/*
-			 * End of message sequence / datagram. Just return since
-			 * we are always provided with enough space to hold
-			 * the largest supported netlink message size.
-			 */
-			return 0;
-
 		case -ENOENT:
 			/* Empty message, skip to next one. */
+			ret = 0;
 			break;
 
+		case -EINTR:
+			/*
+			 * A signal has raised before data availability: return
+			 * as soon as possible to allow the caller to react as
+			 * quick as possible.
+			 */
+			return -EINTR;
+
+		case -ENODATA:
+			/*
+			 * End of message sequence / datagram. Give the caller a
+			 * chance to react to acknowledgment and return since
+			 * we are always provided with enough space to hold
+			 * the largest supported netlink message size, i.e.
+			 * we are sure datagram is over.
+			 */
 		default:
-			return ret;
+			return parse(ret, msg, data);
 		}
 
 		msg = mnl_nlmsg_next(msg, &bytes);
 	} while (mnl_nlmsg_ok(msg, bytes));
 
-	/* Happens when parsing a single part message. */
-	return 0;
+	/*
+	 * As multipart messages may span multiple datagrams, return
+	 * -EINPROGRESS when the end of multipart message marker (NLMSG_DONE)
+	 * has not yet been processed.
+	 * This allows the caller to wait for the next datagram to keep parsing
+	 * the current multipart message sequence.
+	 */
+	return (ret || !(msg->nlmsg_flags & NLM_F_MULTI)) ? ret : -EINPROGRESS;
 }
 
 void

@@ -44,7 +44,9 @@ nlink_parse_error_msg(const struct nlmsghdr *msg);
 extern int
 nlink_parse_msg_head(const struct nlmsghdr *msg);
 
-typedef int (nlink_parse_msg_fn)(const struct nlmsghdr *msg, void *data);
+typedef int (nlink_parse_msg_fn)(int                    status,
+                                 const struct nlmsghdr *msg,
+                                 void                  *data);
 
 extern int
 nlink_parse_msg(const struct nlmsghdr *msg,
