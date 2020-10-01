@@ -20,10 +20,25 @@ struct nlink_work {
 };
 
 struct nlink_win {
+	unsigned int       cnt;
 	unsigned int       nr;
-	struct dlist_node  free;
 	struct dlist_node *pend;
+	struct dlist_node  free;
 };
+
+#define nlink_win_assert(_win) \
+	nlink_assert(_win); \
+	nlink_assert((_win)->nr); \
+	nlink_assert((_win)->cnt <= (_win)->nr); \
+	nlink_assert((_win)->pend)
+
+static inline bool
+nlink_win_has_work(const struct nlink_win *win)
+{
+	nlink_win_assert(win);
+
+	return !!win->cnt;
+}
 
 extern struct nlink_work *
 nlink_win_acquire_work(struct nlink_win *win);
