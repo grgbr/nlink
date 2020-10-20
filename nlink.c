@@ -85,9 +85,10 @@ nlink_parse_msg(const struct nlmsghdr *msg,
                 nlink_parse_msg_fn    *parse,
                 void                  *data)
 {
+	nlink_assert(msg);
+	nlink_assert(size);
 	nlink_assert(mnl_nlmsg_ok(msg, (int)size));
 	nlink_assert(parse);
-	nlink_assert(size);
 
 	int bytes = size;
 	int ret;
